@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Jump AI - Distance Fix</title>
+    <title>Jump AI - Final Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -14,20 +14,28 @@
         
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
         
+        /* Stop Button (Hidden by default) */
+        #manual-stop-btn { 
+            position: absolute; top: 15px; right: 15px; 
+            background: rgba(220, 53, 69, 0.9); color: white; 
+            padding: 15px 30px; border-radius: 30px; font-weight: bold; 
+            pointer-events: auto; display: none; border: 2px solid white; font-size: 18px; z-index: 999;
+        }
+
         /* Flashing Recording Indicator */
         #rec-dot { position: absolute; top: 20px; left: 20px; color: red; font-weight: bold; font-size: 24px; display: none; align-items: center; gap: 8px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
         .pulsing { animation: pulse 1s infinite; }
 
-        #header { background: rgba(0,0,0,0.8); width: 100%; padding: 20px; text-align: center; pointer-events: auto; }
+        #header { background: rgba(0,0,0,0.6); width: 100%; padding: 60px 20px 20px 20px; text-align: center; pointer-events: auto; }
         #status-msg { font-size: 28px; font-weight: 900; color: #00ff00; text-transform: uppercase; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         
         #timer { position: absolute; bottom: 20%; font-size: 150px; font-weight: bold; color: #00ff00; text-shadow: 0 0 20px rgba(0,255,0,0.5); }
         
-        .stats-grid { position: absolute; top: 100px; display: grid; grid-template-columns: 1fr; width: 95%; gap: 10px; pointer-events: none; }
-        .stat-item { background: rgba(0,0,0,0.6); border-radius: 10px; padding: 15px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #333; }
-        .stat-val { font-size: 70px; font-weight: 900; color: #00d2ff; line-height: 1; }
-        .stat-label { font-size: 22px; text-transform: uppercase; color: #fff; font-weight: bold; }
+        .stats-grid { position: absolute; top: 140px; display: grid; grid-template-columns: 1fr; width: 95%; gap: 10px; pointer-events: none; }
+        .stat-item { background: rgba(0,0,0,0.6); border-radius: 10px; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #555; }
+        .stat-val { font-size: 60px; font-weight: 900; color: #00d2ff; line-height: 1; }
+        .stat-label { font-size: 20px; text-transform: uppercase; color: #fff; font-weight: bold; }
 
         #setup-form { position: absolute; z-index: 100; background: white; color: black; padding: 25px; border-radius: 20px; width: 85%; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         select, input { width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #ddd; border-radius: 10px; font-size: 18px; box-sizing: border-box; }
@@ -38,6 +46,7 @@
         #downloadBtn { background: #28a745; }
         #resetBtn { background: #444; }
         
+        /* Adjusted Line Positions: 12% and 20% to keep user closer */
         .calib-line { position: absolute; width: 100%; height: 6px; background: #ff3e3e; display: none; z-index: 10; box-shadow: 0 0 15px red; border-bottom: 2px solid white; }
     </style>
 </head>
@@ -60,6 +69,7 @@
     </div>
 
     <div id="ui-layer">
+        <button id="manual-stop-btn">TAP TO STOP</button>
         <div id="rec-dot" class="pulsing">● REC</div>
         <div id="header"><div id="status-msg">WAITING...</div></div>
         
@@ -74,8 +84,8 @@
             </div>
         </div>
 
-        <div id="cal-line-near" class="calib-line" style="top: 15%;"></div>
-        <div id="cal-line-far" class="calib-line" style="top: 25%;"></div>
+        <div id="cal-line-near" class="calib-line" style="top: 12%;"></div>
+        <div id="cal-line-far" class="calib-line" style="top: 20%;"></div>
         <div id="timer"></div>
 
         <div id="actionBtnContainer">
@@ -92,6 +102,7 @@
     const statusMsg = document.getElementById('status-msg');
     const timerEl = document.getElementById('timer');
     const recDot = document.getElementById('rec-dot');
+    const stopBtn = document.getElementById('manual-stop-btn');
 
     let state = 'IDLE', jumpType, userHeight, userWeight;
     let calibrationData = { near: [], far: [] };
@@ -113,10 +124,10 @@
 
         if (results.poseLandmarks) {
             const l = results.poseLandmarks;
-            const noseY = l[0].y; // Nose is safer than eyes for "above head" check
+            const noseY = l[0].y;
+            const shoulderY = (l[11].y + l[12].y) / 2; // Average shoulder height
             const ankleY = (l[27].y + l[28].y) / 2;
             const hipY = (l[23].y + l[24].y) / 2;
-            // Get highest wrist point (min Y because top is 0)
             const wristY = Math.min(l[15].y, l[16].y); 
 
             // Skeleton Drawing
@@ -129,30 +140,32 @@
             canvasCtx.fillStyle = "yellow";
             canvasCtx.fill();
 
-            // Calibration States
+            // Calibration Logic
             if (state === 'CAL_NEAR') calibrationData.near.push({eye: noseY, ankle: ankleY});
             if (state === 'CAL_FAR') calibrationData.far.push({eye: noseY, ankle: ankleY});
 
-            // --- FIXED GESTURE LOGIC ---
-            // Simply check if wrists are physically higher than the nose.
-            // No offsets, just relative position.
+            // GESTURE LOGIC REFINED:
+            // 1. Start: Wrists above Shoulders (easier than nose)
+            // 2. Stop: Wrists above Shoulders + 0.5s delay
+            const handsUp = wristY < shoulderY; 
+
             if (state === 'READY_TO_JUMP') {
-                if (wristY < noseY && !isRecording) {
+                if (handsUp && !isRecording) {
                     startJumpCountdown();
-                } else if (wristY < noseY && isRecording && (Date.now() - jumpStartTime > 2000)) {
+                } else if (handsUp && isRecording && (Date.now() - jumpStartTime > 500)) {
                     stopRecording();
                 }
             }
 
             if (isRecording) {
                 processJumpData(hipY, ankleY);
-                // Force status update every frame so it doesn't get lost
+                // Flash message
                 if (Date.now() % 1000 < 500) {
                      statusMsg.innerText = "FINISH? HANDS UP!";
-                     statusMsg.style.color = "#ff3e3e"; // Red flash
+                     statusMsg.style.color = "#ff3e3e"; 
                 } else {
                      statusMsg.innerText = "RECORDING...";
-                     statusMsg.style.color = "#00ff00"; // Green flash
+                     statusMsg.style.color = "#00ff00"; 
                 }
             }
         }
@@ -183,18 +196,24 @@
         await waitWithTimer("GET READY...", 3);
         isRecording = true;
         recDot.style.display = 'flex';
+        stopBtn.style.display = 'block'; // Show manual stop button
         jumpStartTime = Date.now();
-        state = 'READY_TO_JUMP'; // Back to this state so we can detect the "Stop" gesture
+        state = 'READY_TO_JUMP'; 
     }
 
     function stopRecording() {
+        if (!isRecording) return;
         isRecording = false;
         recDot.style.display = 'none';
+        stopBtn.style.display = 'none';
         statusMsg.innerText = "TEST COMPLETE";
         statusMsg.style.color = "#00ff00";
         document.getElementById('downloadBtn').style.display = 'block';
         document.getElementById('resetBtn').style.display = 'block';
     }
+
+    // Manual Stop Event
+    stopBtn.addEventListener('click', stopRecording);
 
     const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
@@ -225,13 +244,16 @@
         await waitWithTimer("STAY STILL: LOWER LINE", 10);
         document.getElementById('cal-line-far').style.display = 'none';
 
+        // Calibration Calculation
         const calc = (data, lineY) => {
             const avgE = data.reduce((a,b) => a+b.eye,0)/data.length;
             const avgA = data.reduce((a,b) => a+b.ankle,0)/data.length;
+            // Calibrate Pixels Per Meter based on known line position relative to ankles
             return { ppm: Math.abs(lineY - avgA) * canvasElement.height / (userHeight/100) };
         };
-        const r1 = calc(calibrationData.near, 0.15);
-        const r2 = calc(calibrationData.far, 0.25);
+        // Note: We use the line CSS positions (0.12 and 0.20)
+        const r1 = calc(calibrationData.near, 0.12);
+        const r2 = calc(calibrationData.far, 0.20);
         ppm = (r1.ppm + r2.ppm) / 2;
 
         state = 'READY_TO_JUMP';
