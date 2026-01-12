@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pro Jump AI - Gesture Controlled</title>
+    <title>Elite Jump AI - High Visibility</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -13,26 +13,33 @@
         video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; }
         
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
-        #header { background: rgba(0,0,0,0.7); width: 100%; padding: 10px; text-align: center; pointer-events: auto; }
-        #status-msg { font-size: 18px; font-weight: bold; color: #00ff00; }
         
-        /* Moved Timer lower to avoid blocking calibration lines */
-        #timer { position: absolute; bottom: 200px; font-size: 100px; font-weight: bold; color: #ffcc00; }
-        
-        .stats-grid { position: absolute; top: 60px; display: grid; grid-template-columns: 1fr 1fr 1fr; width: 90%; background: rgba(0,0,0,0.6); border-radius: 10px; padding: 10px; text-align: center; }
-        .stat-val { font-size: 18px; font-weight: bold; color: #00d2ff; }
-        .stat-label { font-size: 9px; text-transform: uppercase; color: #ccc; }
+        /* Recording Indicator */
+        #rec-dot { position: absolute; top: 20px; left: 20px; color: red; font-weight: bold; font-size: 24px; display: none; align-items: center; gap: 8px; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        .pulsing { animation: pulse 1s infinite; }
 
-        #setup-form { position: absolute; z-index: 100; background: white; color: black; padding: 20px; border-radius: 15px; width: 85%; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: auto; }
-        select, input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }
-        #startBtn { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 5px; font-weight: bold; }
+        #header { background: rgba(0,0,0,0.8); width: 100%; padding: 15px; text-align: center; pointer-events: auto; }
+        #status-msg { font-size: 24px; font-weight: bold; color: #00ff00; text-transform: uppercase; }
         
-        #actionBtnContainer { position: absolute; bottom: 30px; width: 90%; display: flex; gap: 10px; pointer-events: auto; }
-        .action-btn { flex: 1; padding: 15px; border-radius: 8px; border: none; font-weight: bold; color: white; display: none; }
+        #timer { position: absolute; bottom: 20%; font-size: 150px; font-weight: bold; color: #00ff00; text-shadow: 0 0 20px rgba(0,255,0,0.5); }
+        
+        /* MASSIVE STATS for distance reading */
+        .stats-grid { position: absolute; top: 80px; display: grid; grid-template-columns: 1fr; width: 95%; gap: 10px; pointer-events: none; }
+        .stat-item { background: rgba(0,0,0,0.5); border-radius: 10px; padding: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .stat-val { font-size: 60px; font-weight: 900; color: #00d2ff; line-height: 1; }
+        .stat-label { font-size: 20px; text-transform: uppercase; color: #fff; font-weight: bold; }
+
+        #setup-form { position: absolute; z-index: 100; background: white; color: black; padding: 25px; border-radius: 20px; width: 85%; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        select, input { width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #ddd; border-radius: 10px; font-size: 18px; }
+        #startBtn { width: 100%; padding: 20px; background: #007bff; color: white; border: none; border-radius: 10px; font-weight: bold; font-size: 20px; }
+        
+        #actionBtnContainer { position: absolute; bottom: 40px; width: 90%; display: flex; gap: 15px; pointer-events: auto; }
+        .action-btn { flex: 1; padding: 20px; border-radius: 12px; border: none; font-weight: bold; color: white; font-size: 18px; display: none; }
         #downloadBtn { background: #28a745; }
-        #resetBtn { background: #dc3545; }
+        #resetBtn { background: #444; }
         
-        .calib-line { position: absolute; width: 100%; height: 4px; background: #ff3e3e; display: none; z-index: 10; border-bottom: 2px solid white; }
+        .calib-line { position: absolute; width: 100%; height: 6px; background: #ff3e3e; display: none; z-index: 10; box-shadow: 0 0 15px red; }
     </style>
 </head>
 <body>
@@ -42,24 +49,30 @@
     <canvas id="output_canvas"></canvas>
     
     <div id="setup-form">
-        <h3 style="margin:0">Jump Setup</h3>
+        <h2 style="margin:0 0 15px 0">Jump Analysis</h2>
         <select id="jumpType">
-            <option value="CMJ">Counter Movement Jump (CMJ)</option>
-            <option value="SJ">Squat Jump (SJ)</option>
-            <option value="DJ">Drop Jump (DJ)</option>
+            <option value="CMJ">Counter Movement Jump</option>
+            <option value="SJ">Squat Jump</option>
+            <option value="DJ">Drop Jump</option>
         </select>
-        <input type="number" id="heightInput" placeholder="Height (cm)" value="180">
-        <input type="number" id="weightInput" placeholder="Weight (kg)" value="75">
-        <button id="startBtn">CONTINUE</button>
+        <input type="number" id="heightInput" placeholder="Your Height (cm)" value="180">
+        <input type="number" id="weightInput" placeholder="Your Weight (kg)" value="75">
+        <button id="startBtn">BEGIN CALIBRATION</button>
     </div>
 
     <div id="ui-layer">
+        <div id="rec-dot" class="pulsing">● REC</div>
         <div id="header"><div id="status-msg">WAITING...</div></div>
         
         <div class="stats-grid">
-            <div><span class="stat-val" id="resHeight">0.0</span><br><span class="stat-label">Height (cm)</span></div>
-            <div><span class="stat-val" id="resVel">0.0</span><br><span class="stat-label">Vel (m/s)</span></div>
-            <div><span class="stat-val" id="resForce">0</span><br><span class="stat-label">Force (N)</span></div>
+            <div class="stat-item">
+                <span class="stat-label">Height</span>
+                <span class="stat-val"><span id="resHeight">0.0</span><small style="font-size:20px">cm</small></span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Velocity</span>
+                <span class="stat-val"><span id="resVel">0.0</span><small style="font-size:20px">m/s</small></span>
+            </div>
         </div>
 
         <div id="cal-line-near" class="calib-line" style="top: 15%;"></div>
@@ -67,8 +80,8 @@
         <div id="timer"></div>
 
         <div id="actionBtnContainer">
-            <button id="downloadBtn" class="action-btn">DOWNLOAD CSV</button>
-            <button id="resetBtn" class="action-btn">RESET</button>
+            <button id="downloadBtn" class="action-btn">GET DATA (CSV)</button>
+            <button id="resetBtn" class="action-btn">NEW TEST</button>
         </div>
     </div>
 </div>
@@ -79,23 +92,22 @@
     const canvasCtx = canvasElement.getContext('2d');
     const statusMsg = document.getElementById('status-msg');
     const timerEl = document.getElementById('timer');
+    const recDot = document.getElementById('rec-dot');
 
-    let state = 'IDLE'; 
-    let jumpType, userHeight, userWeight;
+    let state = 'IDLE', jumpType, userHeight, userWeight;
     let calibrationData = { near: [], far: [] };
     let bioRatio = 0, ppm = 0, floorY = 0, standingHipY = null;
     let jumpLogs = [];
-    let isRecording = false;
+    let isRecording = false, jumpStartTime = 0;
     let maxJumpHeight = 0, maxVelocity = 0;
 
     function onResults(results) {
         canvasElement.width = window.innerWidth;
         canvasElement.height = window.innerHeight;
-        
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         
-        // MIRROR EFFECT:
+        // MIRROR EFFECT
         canvasCtx.translate(canvasElement.width, 0);
         canvasCtx.scale(-1, 1);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -107,21 +119,20 @@
             const hipY = (l[23].y + l[24].y) / 2;
             const wristY = (l[15].y + l[16].y) / 2;
 
-            // Draw Skeleton
+            // Skeleton Drawing
             drawConnectors(canvasCtx, l, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
             drawLandmarks(canvasCtx, l, {color: '#00d2ff', lineWidth: 1, radius: 2});
-
-            // Center of Mass Dot
+            
+            // CoM Dot
             canvasCtx.beginPath();
-            canvasCtx.arc(((l[23].x + l[24].x)/2)*canvasElement.width, hipY*canvasElement.height, 8, 0, 2*Math.PI);
+            canvasCtx.arc(((l[23].x + l[24].x)/2)*canvasElement.width, hipY*canvasElement.height, 12, 0, 2*Math.PI);
             canvasCtx.fillStyle = "yellow";
             canvasCtx.fill();
 
-            // Calibration logic
             if (state === 'CAL_NEAR') calibrationData.near.push({eye: eyeY, ankle: ankleY});
             if (state === 'CAL_FAR') calibrationData.far.push({eye: eyeY, ankle: ankleY});
 
-            // Gesture Trigger Logic
+            // Hands-Up Detection
             if (state === 'READY_TO_JUMP') {
                 if (wristY < eyeY - 0.1 && !isRecording) {
                     startJumpCountdown();
@@ -130,9 +141,7 @@
                 }
             }
 
-            if (isRecording) {
-                processJumpData(hipY, ankleY);
-            }
+            if (isRecording) processJumpData(hipY, ankleY);
         }
         canvasCtx.restore();
     }
@@ -153,8 +162,6 @@
 
         document.getElementById('resHeight').innerText = maxJumpHeight.toFixed(1);
         document.getElementById('resVel').innerText = Math.max(0, maxVelocity).toFixed(2);
-        document.getElementById('resForce').innerText = (userWeight * ((maxVelocity / 0.2) + 9.81)).toFixed(0);
-
         jumpLogs.push({t: time, h: curH, v: vel});
     }
 
@@ -162,14 +169,16 @@
         state = 'COUNTDOWN';
         await waitWithTimer("GET READY...", 3);
         isRecording = true;
+        recDot.style.display = 'flex';
         jumpStartTime = Date.now();
         state = 'READY_TO_JUMP';
-        statusMsg.innerText = "RECORDING... (Hands up to Stop)";
+        statusMsg.innerText = "RECORDING... (Hands Up to Stop)";
     }
 
     function stopRecording() {
         isRecording = false;
-        statusMsg.innerText = "RECORDING STOPPED";
+        recDot.style.display = 'none';
+        statusMsg.innerText = "TEST COMPLETE";
         document.getElementById('downloadBtn').style.display = 'block';
         document.getElementById('resetBtn').style.display = 'block';
     }
@@ -195,26 +204,25 @@
     async function runCalibration() {
         state = 'CAL_NEAR';
         document.getElementById('cal-line-near').style.display = 'block';
-        await waitWithTimer("STAY STILL - TOP LINE", 10);
+        await waitWithTimer("STAY STILL: TOP LINE", 10);
         document.getElementById('cal-line-near').style.display = 'none';
 
         state = 'CAL_FAR';
         document.getElementById('cal-line-far').style.display = 'block';
-        await waitWithTimer("STAY STILL - LOWER LINE", 10);
+        await waitWithTimer("STAY STILL: LOWER LINE", 10);
         document.getElementById('cal-line-far').style.display = 'none';
 
         const calc = (data, lineY) => {
             const avgE = data.reduce((a,b) => a+b.eye,0)/data.length;
             const avgA = data.reduce((a,b) => a+b.ankle,0)/data.length;
-            return { ratio: Math.abs(lineY - avgE) / Math.abs(avgA - avgE), ppm: Math.abs(lineY - avgA) * canvasElement.height / (userHeight/100) };
+            return { ppm: Math.abs(lineY - avgA) * canvasElement.height / (userHeight/100) };
         };
         const r1 = calc(calibrationData.near, 0.15);
         const r2 = calc(calibrationData.far, 0.25);
-        bioRatio = (r1.ratio + r2.ratio) / 2;
         ppm = (r1.ppm + r2.ppm) / 2;
 
         state = 'READY_TO_JUMP';
-        statusMsg.innerText = "HANDS UP TO START";
+        statusMsg.innerText = "RAISE HANDS TO START";
     }
 
     function waitWithTimer(msg, sec) {
@@ -230,12 +238,12 @@
 
     document.getElementById('resetBtn').addEventListener('click', () => location.reload());
     document.getElementById('downloadBtn').addEventListener('click', () => {
-        let csv = `Jump Type: ${jumpType}, Weight: ${userWeight}kg\nTimestamp,Height_m,Velocity_ms\n`;
-        jumpLogs.forEach(row => { csv += `${row.t},${row.h.toFixed(4)},${row.v.toFixed(4)}\n`; });
+        let csv = `Jump: ${jumpType}, H: ${userHeight}cm, W: ${userWeight}kg\nTime(ms),Height(m),Vel(m/s)\n`;
+        jumpLogs.forEach(r => { csv += `${r.t},${r.h.toFixed(4)},${r.v.toFixed(4)}\n`; });
         const blob = new Blob([csv], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = `jump_${jumpType}.csv`; a.click();
+        a.href = window.URL.createObjectURL(blob);
+        a.download = `jump_${jumpType}.csv`; a.click();
     });
 </script>
 </body>
