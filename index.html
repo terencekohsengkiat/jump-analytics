@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Portrait Jump AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        body { margin: 0; padding: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; position: fixed; width: 100%; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        /* UI Overlay */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+        #header { background: rgba(0,0,0,0.6); width: 100%; padding: 15px; text-align: center; pointer-events: auto; }
+        #timer { font-size: 80px; font-weight: bold; margin-top: 20vh; color: #00ff00; text-shadow: 2px 2px 10px rgba(0,0,0,0.5); }
+        #status-msg { font-size: 24px; font-weight: bold; text-align: center; padding: 0 20px; }
+        
+        .stats-grid { position: absolute; bottom: 30px; display: grid; grid-template-columns: 1fr 1fr 1fr; width: 90%; background: rgba(0,0,0,0.7); border-radius: 15px; padding: 15px; text-align: center; }
+        .stat-box { display: flex; flex-direction: column; }
+        .stat-val { font-size: 20px; font-weight: bold; color: #00d2ff; }
+        .stat-label { font-size: 10px; text-transform: uppercase; color: #ccc; }
+
+        #setup-form { position: absolute; z-index: 100; background: white; color: black; padding: 20px; border-radius: 15px; width: 80%; display: block; pointer-events: auto; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 5px; font-weight: bold; }
+        
+        /* Calibration Lines */
+        .calib-line { position: absolute; width: 100%; height: 4px; background: #ff3e3e; display: none; box-shadow: 0 0 10px #ff3e3e; }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <video id="input_video" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+    
+    <div id="setup-form">
+        <h3 style="margin-top:0">Jump Analyzer</h3>
+        <label>Subject Height (cm)</label>
+        <input type="number" id="heightInput" value="180">
+        <label>Subject Weight (kg)</label>
+        <input type="number" id="weightInput" value="75">
+        <button id="startBtn">INITIALIZE CAMERA</button>
+    </div>
+
+    <div id="ui-layer">
+        <div id="header">
+            <div id="status-msg">READY TO START</div>
+        </div>
+        
+        <div id="timer"></div>
+        <div id="cal-line-near" class="calib-line" style="top: 15%;"></div>
+        <div id="cal-line-far" class="calib-line" style="top: 40%;"></div>
+
+        <div class="stats-grid">
+            <div class="stat-box">
+                <span class="stat-val" id="resHeight">0.0</span>
+                <span class="stat-label">Height (cm)</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-val" id="resVel">0.0</span>
+                <span class="stat-label">Vel (m/s)</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-val" id="resForce">0</span>
+                <span class="stat-label">Force (N)</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const statusMsg = document.getElementById('status-msg');
+    const timerEl = document.getElementById('timer');
+
+    let state = 'IDLE';
+    let userHeight = 180;
+    let userWeight = 75;
+    let calibrationData = { near: [], far: [] };
+    let bioRatio = 0; // The calculated Eye-to-Crown ratio
+    let floorY = 0;
+    let ppm = 0; // Pixels Per Meter
+
+    // Physics variables
+    let standingHipY = null;
+    let maxJumpHeight = 0;
+    let maxVelocity = 0;
+    let jumpStartTime = 0;
+
+    async function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        
+        // Match canvas to video dimensions
+        if (canvasElement.width !== videoElement.videoWidth) {
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+        }
+
+        if (results.poseLandmarks) {
+            const landmarks = results.poseLandmarks;
+            const eyeY = (landmarks[1].y + landmarks[2].y) / 2;
+            const ankleY = (landmarks[27].y + landmarks[28].y) / 2;
+            const hipY = (landmarks[23].y + landmarks[24].y) / 2;
+
+            // Handle Calibration States
+            if (state === 'CALIBRATING_NEAR') {
+                calibrationData.near.push({eye: eyeY, ankle: ankleY});
+            } else if (state === 'CALIBRATING_FAR') {
+                calibrationData.far.push({eye: eyeY, ankle: ankleY});
+            } else if (state === 'JUMPING') {
+                trackJump(hipY, ankleY);
+            }
+
+            // Draw Virtual Crown if calibrated
+            if (bioRatio > 0) {
+                const bodyLength = Math.abs(ankleY - eyeY);
+                const crownY = eyeY - (bodyLength * bioRatio);
+                drawPoint(landmarks[0].x, crownY, '#00ff00');
+            }
+        }
+        canvasCtx.restore();
+    }
+
+    function trackJump(hipY, ankleY) {
+        if (!standingHipY) {
+            standingHipY = hipY;
+            floorY = ankleY;
+        }
+
+        const currentHeightPx = standingHipY - hipY;
+        const currentHeightCm = (currentHeightPx * canvasElement.height / ppm) * 100;
+
+        if (currentHeightCm > maxJumpHeight) {
+            maxJumpHeight = currentHeightCm;
+            document.getElementById('resHeight').innerText = maxJumpHeight.toFixed(1);
+        }
+
+        // Simplistic Velocity/Force update
+        if (currentHeightCm > 2 && jumpStartTime === 0) jumpStartTime = Date.now();
+        
+        // If mid-air (ankles lifted from floor baseline)
+        if (Math.abs(floorY - ankleY) > 0.05) {
+            const timeDiff = (Date.now() - jumpStartTime) / 1000;
+            const vel = (currentHeightCm / 100) / (timeDiff || 1);
+            if (vel > maxVelocity) {
+                maxVelocity = vel;
+                document.getElementById('resVel').innerText = maxVelocity.toFixed(2);
+                const force = userWeight * ( (maxVelocity / 0.2) + 9.81 );
+                document.getElementById('resForce').innerText = force.toFixed(0);
+            }
+        }
+    }
+
+    function drawPoint(x, y, color) {
+        canvasCtx.beginPath();
+        canvasCtx.arc(x * canvasElement.width, y * canvasElement.height, 8, 0, 2 * Math.PI);
+        canvasCtx.fillStyle = color;
+        canvasCtx.fill();
+    }
+
+    const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5 });
+    pose.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await pose.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+
+    document.getElementById('startBtn').addEventListener('click', () => {
+        userHeight = parseFloat(document.getElementById('heightInput').value);
+        userWeight = parseFloat(document.getElementById('weightInput').value);
+        document.getElementById('setup-form').style.display = 'none';
+        camera.start();
+        startCalibrationSequence();
+    });
+
+    async function startCalibrationSequence() {
+        // Step 1: Near
+        state = 'CALIBRATING_NEAR';
+        document.getElementById('cal-line-near').style.display = 'block';
+        await countdown("NEAR LINE", 10);
+        document.getElementById('cal-line-near').style.display = 'none';
+
+        // Step 2: Far
+        state = 'CALIBRATING_FAR';
+        document.getElementById('cal-line-far').style.display = 'block';
+        await countdown("FAR LINE", 10);
+        document.getElementById('cal-line-far').style.display = 'none';
+
+        calculateRatios();
+        state = 'JUMPING';
+        statusMsg.innerText = "CALIBRATION COMPLETE. JUMP!";
+        statusMsg.style.color = "#00ff00";
+    }
+
+    function calculateRatios() {
+        const process = (data, lineY) => {
+            const avgEye = data.reduce((a, b) => a + b.eye, 0) / data.length;
+            const avgAnkle = data.reduce((a, b) => a + b.ankle, 0) / data.length;
+            const eyeToCrown = Math.abs(lineY - avgEye);
+            const ankleToEye = Math.abs(avgAnkle - avgEye);
+            return { ratio: eyeToCrown / ankleToEye, ppm: Math.abs(lineY - avgAnkle) * canvasElement.height / (userHeight / 100) };
+        };
+
+        const res1 = process(calibrationData.near, 0.15);
+        const res2 = process(calibrationData.far, 0.40);
+        
+        bioRatio = (res1.ratio + res2.ratio) / 2;
+        ppm = (res1.ppm + res2.ppm) / 2;
+    }
+
+    function countdown(msg, seconds) {
+        return new Promise(resolve => {
+            let count = seconds;
+            const interval = setInterval(() => {
+                statusMsg.innerText = `ALIGN HEAD TO ${msg}`;
+                timerEl.innerText = count;
+                count--;
+                if (count < 0) {
+                    clearInterval(interval);
+                    timerEl.innerText = "";
+                    resolve();
+                }
+            }, 1000);
+        });
+    }
+</script>
+</body>
+</html>
