@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Jump AI - Final Fix</title>
+    <title>Jump AI - Dynamic Distance</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -14,7 +14,6 @@
         
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
         
-        /* Stop Button (Hidden by default) */
         #manual-stop-btn { 
             position: absolute; top: 15px; right: 15px; 
             background: rgba(220, 53, 69, 0.9); color: white; 
@@ -22,7 +21,6 @@
             pointer-events: auto; display: none; border: 2px solid white; font-size: 18px; z-index: 999;
         }
 
-        /* Flashing Recording Indicator */
         #rec-dot { position: absolute; top: 20px; left: 20px; color: red; font-weight: bold; font-size: 24px; display: none; align-items: center; gap: 8px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
         .pulsing { animation: pulse 1s infinite; }
@@ -46,7 +44,6 @@
         #downloadBtn { background: #28a745; }
         #resetBtn { background: #444; }
         
-        /* Adjusted Line Positions: 12% and 20% to keep user closer */
         .calib-line { position: absolute; width: 100%; height: 6px; background: #ff3e3e; display: none; z-index: 10; box-shadow: 0 0 15px red; border-bottom: 2px solid white; }
     </style>
 </head>
@@ -57,7 +54,8 @@
     <canvas id="output_canvas"></canvas>
     
     <div id="setup-form">
-        <h2 style="margin:0 0 15px 0">Jump Analysis</h2>
+        <h2 style="margin:0 0 15px 0">Dynamic Jump AI</h2>
+        <p style="font-size:14px; color: #666; margin-bottom: 15px;">Stand ANY distance away. When you raise your hands, the scale locks in.</p>
         <select id="jumpType">
             <option value="CMJ">Counter Movement Jump</option>
             <option value="SJ">Squat Jump</option>
@@ -65,7 +63,7 @@
         </select>
         <input type="number" id="heightInput" placeholder="Your Height (cm)" value="180">
         <input type="number" id="weightInput" placeholder="Your Weight (kg)" value="75">
-        <button id="startBtn">BEGIN CALIBRATION</button>
+        <button id="startBtn">START CAMERA</button>
     </div>
 
     <div id="ui-layer">
@@ -106,7 +104,10 @@
 
     let state = 'IDLE', jumpType, userHeight, userWeight;
     let calibrationData = { near: [], far: [] };
-    let bioRatio = 0, ppm = 0, floorY = 0, standingHipY = null;
+    let bioRatio = 0; // The Golden Ratio (Eye-to-Crown / Ankle-to-Eye)
+    let livePPM = 0;   // Changes as you move
+    let lockedPPM = 0; // Freezes when you start jumping
+    let floorY = 0, standingHipY = null;
     let jumpLogs = [];
     let isRecording = false, jumpStartTime = 0;
     let maxJumpHeight = 0, maxVelocity = 0;
@@ -116,8 +117,6 @@
         canvasElement.height = window.innerHeight;
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        
-        // MIRROR EFFECT
         canvasCtx.translate(canvasElement.width, 0);
         canvasCtx.scale(-1, 1);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -125,41 +124,54 @@
         if (results.poseLandmarks) {
             const l = results.poseLandmarks;
             const noseY = l[0].y;
-            const shoulderY = (l[11].y + l[12].y) / 2; // Average shoulder height
+            const shoulderY = (l[11].y + l[12].y) / 2;
             const ankleY = (l[27].y + l[28].y) / 2;
             const hipY = (l[23].y + l[24].y) / 2;
             const wristY = Math.min(l[15].y, l[16].y); 
 
-            // Skeleton Drawing
             drawConnectors(canvasCtx, l, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
             drawLandmarks(canvasCtx, l, {color: '#00d2ff', lineWidth: 1, radius: 2});
             
-            // CoM Dot
             canvasCtx.beginPath();
             canvasCtx.arc(((l[23].x + l[24].x)/2)*canvasElement.width, hipY*canvasElement.height, 12, 0, 2*Math.PI);
             canvasCtx.fillStyle = "yellow";
             canvasCtx.fill();
 
-            // Calibration Logic
+            // --- 1. DYNAMIC RULER LOGIC ---
+            // Whenever we have a ratio, we constantly update livePPM
+            // based on how big the user looks right now.
+            if (bioRatio > 0) {
+                 const currentAnkleToEye = Math.abs(ankleY - noseY);
+                 // Total Body Height in Pixels = AnkleToEye + (AnkleToEye * bioRatio)
+                 const totalBodyPixels = currentAnkleToEye * (1 + bioRatio);
+                 // PPM = TotalPixels / RealHeightMeters
+                 livePPM = totalBodyPixels * canvasElement.height / (userHeight / 100);
+            }
+
+            // Calibration Phase Logic
             if (state === 'CAL_NEAR') calibrationData.near.push({eye: noseY, ankle: ankleY});
             if (state === 'CAL_FAR') calibrationData.far.push({eye: noseY, ankle: ankleY});
 
-            // GESTURE LOGIC REFINED:
-            // 1. Start: Wrists above Shoulders (easier than nose)
-            // 2. Stop: Wrists above Shoulders + 0.5s delay
+            // --- 2. GESTURE LOGIC ---
             const handsUp = wristY < shoulderY; 
 
             if (state === 'READY_TO_JUMP') {
                 if (handsUp && !isRecording) {
-                    startJumpCountdown();
+                    // LOCK THE RULER NOW
+                    if (livePPM > 0) {
+                        lockedPPM = livePPM; // <--- MAGIC MOMENT
+                        startJumpCountdown();
+                    } else {
+                        statusMsg.innerText = "CALIBRATION ERROR";
+                    }
                 } else if (handsUp && isRecording && (Date.now() - jumpStartTime > 500)) {
                     stopRecording();
                 }
             }
 
             if (isRecording) {
+                // Use LOCKED PPM, ignore livePPM
                 processJumpData(hipY, ankleY);
-                // Flash message
                 if (Date.now() % 1000 < 500) {
                      statusMsg.innerText = "FINISH? HANDS UP!";
                      statusMsg.style.color = "#ff3e3e"; 
@@ -174,7 +186,8 @@
 
     function processJumpData(hipY, ankleY) {
         if (!standingHipY) { standingHipY = hipY; floorY = ankleY; }
-        const curH = Math.max(0, (standingHipY - hipY) * canvasElement.height / ppm);
+        // Crucial: We use lockedPPM here
+        const curH = Math.max(0, (standingHipY - hipY) * canvasElement.height / lockedPPM);
         const time = Date.now();
 
         let vel = 0;
@@ -193,10 +206,10 @@
 
     async function startJumpCountdown() {
         state = 'COUNTDOWN';
-        await waitWithTimer("GET READY...", 3);
+        await waitWithTimer("LOCKING SCALE...", 3);
         isRecording = true;
         recDot.style.display = 'flex';
-        stopBtn.style.display = 'block'; // Show manual stop button
+        stopBtn.style.display = 'block';
         jumpStartTime = Date.now();
         state = 'READY_TO_JUMP'; 
     }
@@ -212,7 +225,6 @@
         document.getElementById('resetBtn').style.display = 'block';
     }
 
-    // Manual Stop Event
     stopBtn.addEventListener('click', stopRecording);
 
     const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
@@ -234,6 +246,8 @@
     });
 
     async function runCalibration() {
+        // We still need the initial calibration to calculate the "Head-to-Eye" ratio (bioRatio)
+        // This ratio is constant regardless of distance.
         state = 'CAL_NEAR';
         document.getElementById('cal-line-near').style.display = 'block';
         await waitWithTimer("STAY STILL: TOP LINE", 10);
@@ -244,20 +258,21 @@
         await waitWithTimer("STAY STILL: LOWER LINE", 10);
         document.getElementById('cal-line-far').style.display = 'none';
 
-        // Calibration Calculation
-        const calc = (data, lineY) => {
-            const avgE = data.reduce((a,b) => a+b.eye,0)/data.length;
-            const avgA = data.reduce((a,b) => a+b.ankle,0)/data.length;
-            // Calibrate Pixels Per Meter based on known line position relative to ankles
-            return { ppm: Math.abs(lineY - avgA) * canvasElement.height / (userHeight/100) };
+        // Calculate ONLY the Bio-Ratio (Constant of Anatomy)
+        const calcBio = (data, lineY) => {
+            const avgEye = data.reduce((a,b) => a+b.eye,0)/data.length;
+            const avgAnkle = data.reduce((a,b) => a+b.ankle,0)/data.length;
+            const eyeToCrown = Math.abs(lineY - avgEye);
+            const ankleToEye = Math.abs(avgAnkle - avgEye);
+            return eyeToCrown / ankleToEye;
         };
-        // Note: We use the line CSS positions (0.12 and 0.20)
-        const r1 = calc(calibrationData.near, 0.12);
-        const r2 = calc(calibrationData.far, 0.20);
-        ppm = (r1.ppm + r2.ppm) / 2;
+
+        const r1 = calcBio(calibrationData.near, 0.12);
+        const r2 = calcBio(calibrationData.far, 0.20);
+        bioRatio = (r1 + r2) / 2;
 
         state = 'READY_TO_JUMP';
-        statusMsg.innerText = "RAISE HANDS TO START";
+        statusMsg.innerText = "STAND ANYWHERE -> HANDS UP";
     }
 
     function waitWithTimer(msg, sec) {
