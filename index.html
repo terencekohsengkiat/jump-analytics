@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Elite Jump AI - High Visibility</title>
+    <title>Jump AI - Distance Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -14,24 +14,23 @@
         
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
         
-        /* Recording Indicator */
-        #rec-dot { position: absolute; top: 20px; left: 20px; color: red; font-weight: bold; font-size: 24px; display: none; align-items: center; gap: 8px; }
+        /* Flashing Recording Indicator */
+        #rec-dot { position: absolute; top: 20px; left: 20px; color: red; font-weight: bold; font-size: 24px; display: none; align-items: center; gap: 8px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
         .pulsing { animation: pulse 1s infinite; }
 
-        #header { background: rgba(0,0,0,0.8); width: 100%; padding: 15px; text-align: center; pointer-events: auto; }
-        #status-msg { font-size: 24px; font-weight: bold; color: #00ff00; text-transform: uppercase; }
+        #header { background: rgba(0,0,0,0.8); width: 100%; padding: 20px; text-align: center; pointer-events: auto; }
+        #status-msg { font-size: 28px; font-weight: 900; color: #00ff00; text-transform: uppercase; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         
         #timer { position: absolute; bottom: 20%; font-size: 150px; font-weight: bold; color: #00ff00; text-shadow: 0 0 20px rgba(0,255,0,0.5); }
         
-        /* MASSIVE STATS for distance reading */
-        .stats-grid { position: absolute; top: 80px; display: grid; grid-template-columns: 1fr; width: 95%; gap: 10px; pointer-events: none; }
-        .stat-item { background: rgba(0,0,0,0.5); border-radius: 10px; padding: 10px; display: flex; justify-content: space-between; align-items: center; }
-        .stat-val { font-size: 60px; font-weight: 900; color: #00d2ff; line-height: 1; }
-        .stat-label { font-size: 20px; text-transform: uppercase; color: #fff; font-weight: bold; }
+        .stats-grid { position: absolute; top: 100px; display: grid; grid-template-columns: 1fr; width: 95%; gap: 10px; pointer-events: none; }
+        .stat-item { background: rgba(0,0,0,0.6); border-radius: 10px; padding: 15px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #333; }
+        .stat-val { font-size: 70px; font-weight: 900; color: #00d2ff; line-height: 1; }
+        .stat-label { font-size: 22px; text-transform: uppercase; color: #fff; font-weight: bold; }
 
         #setup-form { position: absolute; z-index: 100; background: white; color: black; padding: 25px; border-radius: 20px; width: 85%; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        select, input { width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #ddd; border-radius: 10px; font-size: 18px; }
+        select, input { width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #ddd; border-radius: 10px; font-size: 18px; box-sizing: border-box; }
         #startBtn { width: 100%; padding: 20px; background: #007bff; color: white; border: none; border-radius: 10px; font-weight: bold; font-size: 20px; }
         
         #actionBtnContainer { position: absolute; bottom: 40px; width: 90%; display: flex; gap: 15px; pointer-events: auto; }
@@ -39,7 +38,7 @@
         #downloadBtn { background: #28a745; }
         #resetBtn { background: #444; }
         
-        .calib-line { position: absolute; width: 100%; height: 6px; background: #ff3e3e; display: none; z-index: 10; box-shadow: 0 0 15px red; }
+        .calib-line { position: absolute; width: 100%; height: 6px; background: #ff3e3e; display: none; z-index: 10; box-shadow: 0 0 15px red; border-bottom: 2px solid white; }
     </style>
 </head>
 <body>
@@ -114,10 +113,11 @@
 
         if (results.poseLandmarks) {
             const l = results.poseLandmarks;
-            const eyeY = (l[1].y + l[2].y) / 2;
+            const noseY = l[0].y; // Nose is safer than eyes for "above head" check
             const ankleY = (l[27].y + l[28].y) / 2;
             const hipY = (l[23].y + l[24].y) / 2;
-            const wristY = (l[15].y + l[16].y) / 2;
+            // Get highest wrist point (min Y because top is 0)
+            const wristY = Math.min(l[15].y, l[16].y); 
 
             // Skeleton Drawing
             drawConnectors(canvasCtx, l, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
@@ -129,19 +129,32 @@
             canvasCtx.fillStyle = "yellow";
             canvasCtx.fill();
 
-            if (state === 'CAL_NEAR') calibrationData.near.push({eye: eyeY, ankle: ankleY});
-            if (state === 'CAL_FAR') calibrationData.far.push({eye: eyeY, ankle: ankleY});
+            // Calibration States
+            if (state === 'CAL_NEAR') calibrationData.near.push({eye: noseY, ankle: ankleY});
+            if (state === 'CAL_FAR') calibrationData.far.push({eye: noseY, ankle: ankleY});
 
-            // Hands-Up Detection
+            // --- FIXED GESTURE LOGIC ---
+            // Simply check if wrists are physically higher than the nose.
+            // No offsets, just relative position.
             if (state === 'READY_TO_JUMP') {
-                if (wristY < eyeY - 0.1 && !isRecording) {
+                if (wristY < noseY && !isRecording) {
                     startJumpCountdown();
-                } else if (wristY < eyeY - 0.1 && isRecording && (Date.now() - jumpStartTime > 2000)) {
+                } else if (wristY < noseY && isRecording && (Date.now() - jumpStartTime > 2000)) {
                     stopRecording();
                 }
             }
 
-            if (isRecording) processJumpData(hipY, ankleY);
+            if (isRecording) {
+                processJumpData(hipY, ankleY);
+                // Force status update every frame so it doesn't get lost
+                if (Date.now() % 1000 < 500) {
+                     statusMsg.innerText = "FINISH? HANDS UP!";
+                     statusMsg.style.color = "#ff3e3e"; // Red flash
+                } else {
+                     statusMsg.innerText = "RECORDING...";
+                     statusMsg.style.color = "#00ff00"; // Green flash
+                }
+            }
         }
         canvasCtx.restore();
     }
@@ -171,14 +184,14 @@
         isRecording = true;
         recDot.style.display = 'flex';
         jumpStartTime = Date.now();
-        state = 'READY_TO_JUMP';
-        statusMsg.innerText = "RECORDING... (Hands Up to Stop)";
+        state = 'READY_TO_JUMP'; // Back to this state so we can detect the "Stop" gesture
     }
 
     function stopRecording() {
         isRecording = false;
         recDot.style.display = 'none';
         statusMsg.innerText = "TEST COMPLETE";
+        statusMsg.style.color = "#00ff00";
         document.getElementById('downloadBtn').style.display = 'block';
         document.getElementById('resetBtn').style.display = 'block';
     }
